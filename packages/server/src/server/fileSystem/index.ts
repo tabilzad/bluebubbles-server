@@ -112,8 +112,6 @@ export class FileSystem {
 
     public static findMyFriendsDir = path.join(userHomeDir(), "Library", "Caches", "com.apple.icloud.fmfd");
 
-    public static findMyFriendsCoreDir = path.join(userHomeDir(), "Library", "Caches", "com.apple.findmy.fmfcore");
-
     public static get usingCustomFcm(): boolean {
         const fcmClient = Server().args["fcm-client"];
         const fcmServer = Server().args["fcm-server"];

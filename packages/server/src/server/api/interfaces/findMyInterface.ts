@@ -9,10 +9,7 @@ import { FindMyDevice, FindMyItem, FindMyLocationItem } from "@server/api/lib/fi
 import { transformFindMyItemToDevice } from "@server/api/lib/findmy/utils";
 
 export class FindMyInterface {
-    static async getFriends(): Promise<FindMyLocationItem[]> {
-        // Try to supplement the in-memory cache with data from the filesystem.
-        // On macOS < 14.4, the friends cache file is unencrypted JSON.
-        await FindMyInterface.loadFriendsFromFile();
+    static async getFriends() {
         return Server().findMyCache.getAll();
     }
 
@@ -80,6 +77,15 @@ export class FindMyInterface {
             const result = await Server().privateApi.findmy.refreshFriends();
             const refreshLocations = result?.data?.locations ?? [];
 
+            Server().logger.debug(`FindMy Private API returned ${refreshLocations.length} location(s)`);
+            for (const loc of refreshLocations) {
+                Server().logger.debug(
+                    `  -> handle=${loc?.handle}, coords=[${loc?.coordinates}], ` +
+                    `status=${loc?.status}, last_updated=${loc?.last_updated}, ` +
+                    `short_address=${loc?.short_address}`
+                );
+            }
+
             // Save the data to the cache
             // The cache will handle properly updating the data.
             Server().findMyCache.addAll(refreshLocations);
@@ -91,9 +97,6 @@ export class FindMyInterface {
         if (openFindMyApp) {
             await this.refreshLocationsAccessibility();
         }
-
-        // After the accessibility refresh, read any updated data from disk
-        await FindMyInterface.loadFriendsFromFile();
 
         return Server().findMyCache.getAll();
     }
@@ -114,67 +117,6 @@ export class FindMyInterface {
 
         // Re-hide the Find My App
         await FileSystem.executeAppleScript(hideFindMyFriends());
-    }
-
-    /**
-     * Reads friend location data from the macOS FindMy cache file on disk
-     * and loads it into the in-memory cache.
-     *
-     * On macOS < 14.4, the file at ~/Library/Caches/com.apple.findmy.fmfcore/FriendCacheData.data
-     * is an unencrypted JSON array of friend records with location data.
-     */
-    static async loadFriendsFromFile(): Promise<void> {
-        try {
-            const friendCachePath = path.join(FileSystem.findMyFriendsCoreDir, "FriendCacheData.data");
-            if (!fs.existsSync(friendCachePath)) return;
-
-            const data = await fs.promises.readFile(friendCachePath, { encoding: "utf-8" });
-            const parsedData = JSON.parse(data);
-            if (!Array.isArray(parsedData)) return;
-
-            const locationItems: FindMyLocationItem[] = [];
-            for (const friend of parsedData) {
-                // The friend cache file contains records with location data.
-                // Extract what we need and transform into FindMyLocationItem format.
-                const handle = friend?.handle ?? friend?.id ?? friend?.invitationFromHandles?.[0] ?? null;
-                if (!handle) continue;
-
-                const location = friend?.location ?? friend?.coordinates ?? null;
-                if (!location) continue;
-
-                const lat = location?.latitude ?? location?.[0] ?? 0;
-                const lon = location?.longitude ?? location?.[1] ?? 0;
-
-                const address = friend?.location?.address ?? friend?.address ?? null;
-                const formattedAddress = address?.formattedAddressLines?.join(", ") ?? null;
-                const shortAddress = address?.locality
-                    ? `${address.locality}, ${address.administrativeArea ?? address.stateCode ?? ""}`
-                    : null;
-
-                const timestamp = location?.timestamp ?? location?.timeStamp ?? friend?.locationTimestamp ?? 0;
-
-                locationItems.push({
-                    handle,
-                    coordinates: [lat, lon],
-                    long_address: formattedAddress,
-                    short_address: shortAddress,
-                    subtitle: shortAddress,
-                    title: friend?.firstName
-                        ? `${friend.firstName}${friend.lastName ? " " + friend.lastName : ""}`
-                        : handle,
-                    last_updated: timestamp,
-                    is_locating_in_progress: 0,
-                    status: "legacy"
-                });
-            }
-
-            if (locationItems.length > 0) {
-                Server().findMyCache.addAll(locationItems);
-            }
-        } catch (ex: any) {
-            Server().logger.debug('Failed to read FindMy friends cache file from disk.');
-            Server().logger.debug(String(ex));
-        }
     }
 
     static async readItemGroups(): Promise<Array<any>> {

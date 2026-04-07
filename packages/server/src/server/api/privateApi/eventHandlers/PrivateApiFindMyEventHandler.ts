@@ -25,6 +25,14 @@ export class PrivateApiFindMyEventHandler extends Loggable implements PrivateApi
     async handleNewLocation(data: FindMyLocationItem[]) {
         if (isEmpty(data)) return;
 
+        this.log.debug(`Received ${data.length} FindMy location update(s) from Private API event`);
+        for (const loc of data) {
+            this.log.debug(
+                `  -> handle=${obfuscatedHandle(loc?.handle)}, coords=[${loc?.coordinates}], ` +
+                `status=${loc?.status}, last_updated=${loc?.last_updated}`
+            );
+        }
+
         // Store the data in the cache
         const added = Server().findMyCache?.addAll(data);
 
