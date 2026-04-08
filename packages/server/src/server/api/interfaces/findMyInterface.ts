@@ -74,11 +74,32 @@ export class FindMyInterface {
         const papiEnabled = Server().repo.getConfig("enable_private_api") as boolean;
         if (papiEnabled && isMinBigSur && !isMinSonoma) {
             checkPrivateApiStatus();
-            const result = await Server().privateApi.findmy.refreshFriends();
-            const refreshLocations = result?.data?.locations ?? [];
 
-            Server().logger.debug(`FindMy Private API returned ${refreshLocations.length} location(s)`);
-            for (const loc of refreshLocations) {
+            // The helper dylib reads cached locations from FMFSession, then
+            // calls forceRefresh AFTER sending the response. This means the
+            // first call always returns stale data. We work around this by
+            // calling refresh twice: the first call triggers the background
+            // refresh in the helper, then after a delay the second call
+            // reads the now-updated cache.
+            const firstResult = await Server().privateApi.findmy.refreshFriends();
+            const firstLocations = firstResult?.data?.locations ?? [];
+
+            // Add whatever we got from the first call
+            if (firstLocations.length > 0) {
+                Server().findMyCache.addAll(firstLocations);
+            }
+
+            // Wait for the helper's forceRefresh to complete in the background.
+            // FMFSession.forceRefresh contacts Apple's servers asynchronously;
+            // 10 seconds is typically enough for the daemon to update its cache.
+            await waitMs(10000);
+
+            // Second call reads the now-refreshed FMFSession cache
+            const secondResult = await Server().privateApi.findmy.refreshFriends();
+            const secondLocations = secondResult?.data?.locations ?? [];
+
+            Server().logger.debug(`FindMy Private API returned ${secondLocations.length} location(s) after refresh`);
+            for (const loc of secondLocations) {
                 Server().logger.debug(
                     `  -> handle=${loc?.handle}, coords=[${loc?.coordinates}], ` +
                     `status=${loc?.status}, last_updated=${loc?.last_updated}, ` +
@@ -86,14 +107,14 @@ export class FindMyInterface {
                 );
             }
 
-            // Save the data to the cache
-            // The cache will handle properly updating the data.
-            Server().findMyCache.addAll(refreshLocations);
+            if (secondLocations.length > 0) {
+                Server().findMyCache.addAll(secondLocations);
+            }
         }
 
         // Open the FindMy app to trigger a location refresh on macOS.
         // We must await so the app has time to fetch updated locations
-        // before we read the cache files and return the response.
+        // before we return the response.
         if (openFindMyApp) {
             await this.refreshLocationsAccessibility();
         }
